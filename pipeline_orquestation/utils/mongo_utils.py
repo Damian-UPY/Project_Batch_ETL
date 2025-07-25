@@ -1,35 +1,43 @@
 from pymongo import MongoClient
+from urllib.parse import quote_plus
 import os
 
+_client = None  # Cache for MongoClient
+
 def get_mongo_client():
-    """Crea y devuelve un cliente de MongoDB usando MONGO_URI."""
-    mongo_uri = os.getenv('MONGO_URI', 'mongodb://root:example@mongodb:27017/project_db?authSource=admin')
-    return MongoClient(mongo_uri)
+    """Return a MongoDB client (singleton pattern for performance)."""
+    global _client
+    if _client:
+        return _client
 
-def insert_data(data, collection_name):
-    """Inserta uno o varios documentos en la colección especificada."""
-    client = get_mongo_client()
-    db = client.get_database()  # Usa el DB definido en la URI
-    collection = db[collection_name]
+    mongo_uri = os.getenv("MONGO_URI")
+    if not mongo_uri:
+        username = quote_plus("root")
+        password = quote_plus("example")
+        mongo_uri = f"mongodb://{username}:{password}@mongodb:27017/?authSource=admin"
+    
+    try:
+        _client = MongoClient(mongo_uri)
+        # Test connection
+        _client.admin.command("ping")
+    except Exception as e:
+        raise ConnectionError(f"Failed to connect to MongoDB: {e}")
 
+    return _client
+
+def get_raw_collection(db_name: str, source_name: str):
+    return get_mongo_client()[db_name][f"raw_{source_name.lower()}"]
+
+def get_processed_collection(db_name: str, source_name: str):
+    return get_mongo_client()[db_name][f"processed_{source_name.lower()}"]
+
+def insert_data(collection, data):
+    """Insert a document or list of documents into a collection."""
     if isinstance(data, list):
         collection.insert_many(data)
-        print(f"✅ Inserted {len(data)} documents into '{collection_name}'")
     else:
         collection.insert_one(data)
-        print(f"✅ Inserted 1 document into '{collection_name}'")
 
-def find_data(collection_name, query=None):
-    """Busca documentos en la colección (query opcional)."""
-    client = get_mongo_client()
-    db = client.get_database()
-    collection = db[collection_name]
-    return list(collection.find(query or {}))
-
-def delete_data(collection_name, query=None):
-    """Elimina documentos según la query (o todos si no se especifica)."""
-    client = get_mongo_client()
-    db = client.get_database()
-    collection = db[collection_name]
-    result = collection.delete_many(query or {})
-    print(f"✅ Deleted {result.deleted_count} documents from '{collection_name}'")
+def find_latest(collection):
+    """Find the latest document based on _id."""
+    return collection.find_one(sort=[("_id", -1)])
