@@ -1,15 +1,20 @@
 from pymongo import MongoClient
 import os
 
-# Obtener URI desde variable de entorno o usar valor por defecto seguro
+# ✅ MongoDB connection
 mongo_uri = os.getenv('MONGO_URI', 'mongodb://root:example@mongodb:27017/project_db?authSource=admin')
-
-# Conectar a MongoDB
 client = MongoClient(mongo_uri)
-db = client.get_database()  # Usa la base de datos definida en la URI
-collection = db[os.getenv('MONGO_COLLECTION', 'cats_dataset')]
+db = client.get_database()  # Uses DB from URI (project_db)
 
-def get_latest_dataset():
-    """Obtiene todos los documentos sin mostrar _id."""
-    data = list(collection.find({}, {'_id': 0}))
-    return data
+# ✅ Functions to fetch processed data
+def get_crypto_market_data():
+    """Fetch latest processed cryptocurrency market data."""
+    return list(db["processed_crypto_market"].find({}, {"_id": 0}).sort("_id", -1).limit(1))
+
+def get_binance_tickers():
+    """Fetch latest processed Binance tickers data."""
+    return list(db["processed_binance_tickers"].find({}, {"_id": 0}).sort("_id", -1).limit(1))
+
+def get_wazirx_tickers():
+    """Fetch latest processed WazirX tickers data."""
+    return list(db["processed_wazirx_tickers"].find({}, {"_id": 0}).sort("_id", -1).limit(1))

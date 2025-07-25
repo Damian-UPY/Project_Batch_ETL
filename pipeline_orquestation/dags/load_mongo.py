@@ -1,50 +1,58 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
-import os
 from pymongo import MongoClient
+import os
 
 default_args = {
-    'owner': 'DamianNovelo',
-    'depends_on_past': False,
-    'start_date': datetime(2024, 1, 1),
-    'retries': 1,
-    'retry_delay': timedelta(minutes=5),
+    "owner": "DamianNovelo",
+    "depends_on_past": False,
+    "start_date": datetime(2024, 1, 1),
+    "retries": 1,
+    "retry_delay": timedelta(minutes=5)
 }
 
-with DAG('load_mongo', default_args=default_args, schedule_interval='@daily', catchup=False) as dag:
+def load_consolidated_data():
+    """Reads processed data from multiple Mongo collections and consolidates into one."""
+    mongo_uri = os.getenv(
+        "MONGO_URI",
+        "mongodb://root:example@mongodb:27017/project_db?authSource=admin"
+    )
+    client = MongoClient(mongo_uri)
+    db = client.get_database()
 
-    def load_data(**kwargs):
-        # Recuperar datos desde XComs
-        breeds = kwargs['ti'].xcom_pull(key='breeds_data', task_ids='extract_breeds')
-        images = kwargs['ti'].xcom_pull(key='images_data', task_ids='extract_images')
-        categories = kwargs['ti'].xcom_pull(key='categories_data', task_ids='extract_categories')
+    # Collections to consolidate
+    crypto_data = db["processed_crypto_market"].find_one(sort=[("_id", -1)])
+    binance_data = db["processed_binance_tickers"].find_one(sort=[("_id", -1)])
+    wazirx_data = db["processed_wazirx_tickers"].find_one(sort=[("_id", -1)])
 
-        consolidated = {
-            'breeds': breeds or [],
-            'images': images or [],
-            'categories': categories or []
+    consolidated = {
+        "crypto_market": crypto_data.get("crypto_data", []) if crypto_data else [],
+        "binance": binance_data.get("binance_data", []) if binance_data else [],
+        "wazirx": wazirx_data.get("wazirx_data", []) if wazirx_data else [],
+        "timestamp": datetime.utcnow().isoformat(),
+        "metadata": {
+            "total_sources": 3,
+            "status": "consolidated",
+            "sources": ["CoinGecko", "Binance", "WazirX"]
         }
+    }
 
-        # ✅ Conexión segura a MongoDB
-        mongo_uri = os.getenv(
-            'MONGO_URI',
-            'mongodb://root:example@mongodb:27017/project_db?authSource=admin'
-        )
-        client = MongoClient(mongo_uri)
+    # Insert into consolidated collection
+    consolidated_collection = db["consolidated_crypto_dashboard"]
+    consolidated_collection.insert_one(consolidated)
 
-        # Obtener base de datos y colección
-        db = client.get_database()
-        collection_name = os.getenv('MONGO_COLLECTION', 'cats_dataset')
-        collection = db[collection_name]
+    print("✅ Consolidated data inserted into 'consolidated_crypto_dashboard'")
 
-        # Insertar datos
-        collection.insert_one(consolidated)
-        print(f"✅ Inserted consolidated dataset into '{collection_name}' in MongoDB")
+with DAG(
+    "load_mongo",
+    default_args=default_args,
+    schedule_interval="@daily",
+    catchup=False,
+    tags=["etl", "mongo", "consolidation"]
+) as dag:
 
-    # Crear la tarea en Airflow
-    PythonOperator(
-        task_id='load_data',
-        python_callable=load_data,
-        provide_context=True
+    consolidate_task = PythonOperator(
+        task_id="consolidate_processed_data",
+        python_callable=load_consolidated_data
     )
